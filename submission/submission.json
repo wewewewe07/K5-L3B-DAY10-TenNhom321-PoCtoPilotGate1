@@ -1,12 +1,16 @@
 {
-  "team": "",
-  "members": [],
-  "incident": "",
-  "decision_v1": "",
-  "decision_v2": "",
+  "team": "K5-L3B-DAY10-TenNhom321-PoCtoPilotGate1",
+  "members": [
+    "TrinhNgocNinh-2A202603996",
+    "NguyenThanhTung-2A202603957",
+    "GiangThaiSon-2A202603964"
+  ],
+  "incident": "S1",
+  "decision_v1": "Thu hẹp",
+  "decision_v2": "Cải tiến thêm",
   "three_lines": {
-    "environment_assumption": "",
-    "reduce_or_prevent": "",
-    "measure_in_pilot": ""
+    "environment_assumption": "Điểm phát và máy quét của hãng luôn ghi delivered_date đúng và đủ ngay khi giao, và mỗi ngày vận hành độc lập với các ngày khác (nên trần 2 lỗi/hãng/ngày đủ bảo vệ hãng khỏi ngưỡng 3 lỗi/7 ngày).",
+    "reduce_or_prevent": "Với ba nhánh (số khách khai, ngày giao trống, nguyên nhân trống) cổng NGĂN được: chúng so với tracking trong DB, không đọc chữ khách, và chuyển người khi dữ liệu mâu thuẫn; nhưng chỉ đúng khi chính tracking đúng. Với nhánh lỗi đổ dồn nhiều ngày thì chỉ GIẢM, vì trần tính theo ngày còn ngưỡng ngưng tuyến tính theo 7 ngày.",
+    "measure_in_pilot": "(a) tỉ lệ kiện đã giao mà thiếu delivered_date hoặc delay_cause thật; (b) số lỗi tự động theo hãng trong 7 ngày thật; (c) chi phí mỗi ticket ở khối lượng thật mỗi ngày; (d) tỉ lệ ca G4 và G5 chuyển người so với sức duyệt 6 ca/giờ; (e) tỉ lệ LLM lỗi 429 giờ cao điểm."
   }
 }

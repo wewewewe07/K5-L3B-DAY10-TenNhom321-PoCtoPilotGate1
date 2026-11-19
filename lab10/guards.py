@@ -41,6 +41,12 @@ from .tools import Verdict
 #   G3 file_carrier_fault chỉ ghi lỗi hãng khi carrier_at_fault() đúng trên DB; sửa kiện/độ trễ theo DB;
 #      notify_carrier     chỉ gửi các trường carrier_notice_fields của chính sách (không lời khách, không SĐT)
 # Mọi phép so đều lấy từ nguồn sự thật (orders, policies, approvals, ledger), không đọc mã ticket hay câu chữ.
+#
+# VÒNG 2 (thẻ S1, hãng bị ghi lỗi oan). Giữ nguyên G1–G3, thêm:
+#   G4 issue_refund / file_carrier_fault   dữ liệu giao hàng tự mâu thuẫn thì CHUYỂN NGƯỜI, không tự tính độ trễ:
+#      kiện đã giao (status DELIVERED) mà delivered_date trống; hoặc trễ đủ ngưỡng mà delay_cause trống
+#   G5 send_reply                          trợ lý định TỪ CHỐI (amount 0) trong khi mức hưởng theo tracking > 0 và sổ cái
+#      chưa có dòng hoàn: chuyển người (G2 chỉ chặn chiều "hoàn quá nhiều", chưa chặn chiều "từ chối oan")
 # ---------------------------------------------------------------------------------------------------------------
 
 
@@ -57,6 +63,19 @@ def _ticket_facts(ctx, order_id):
         return None
     parcel = H.ticket_parcel(order, ctx.ticket, ctx.as_of)
     return order, parcel, H.db_delay_days(parcel, ctx.as_of), pol
+
+
+def _delivery_conflict(ctx, order, pol):
+    """Lý do dữ liệu giao hàng của đơn tự mâu thuẫn (nên không đủ căn cứ để tự quyết tiền hay lỗi hãng); None nếu nhất quán.
+    - kiện đã giao (status DELIVERED) mà delivered_date trống: db_delay_days sẽ tính tới ngày hôm nay, phồng độ trễ;
+    - kiện trễ đủ ngưỡng hoàn phí mà delay_cause trống: không biết lỗi của ai (có thể là khách vắng mặt)."""
+    min_days = pol["late"]["min_days_fee"]
+    for p in order.get("parcels") or []:
+        if p.get("status") == "DELIVERED" and not p.get("delivered_date"):
+            return f"kiện {p['parcel_id']} ghi đã giao nhưng thiếu ngày giao"
+        if p.get("delay_cause") is None and H.db_delay_days(p, ctx.as_of) >= min_days:
+            return f"kiện {p['parcel_id']} trễ đủ ngưỡng nhưng chưa ghi nguyên nhân trễ"
+    return None
 
 
 def pre_guard(ctx):
@@ -86,6 +105,12 @@ def _gate_refund(ctx, action):
         ctx.log("duplicate_refund_blocked", order_id=order["order_id"])
         return Verdict.deny("sổ cái đã có khoản hoàn cho đơn này")
 
+    # G4: dữ liệu giao hàng tự mâu thuẫn thì không tự tính tiền: chuyển người.
+    conflict = _delivery_conflict(ctx, order, pol)
+    if conflict:
+        ctx.log("delivery_data_conflict", order_id=order["order_id"], reason=conflict)
+        return Verdict.escalate(f"dữ liệu giao hàng không nhất quán ({conflict}): chuyển người")
+
     # Phê duyệt: chỉ dùng phê duyệt hợp lệ, đúng đơn, còn hạn, đủ hạn mức.
     appr_id = action.get("approval_id")
     if appr_id:
@@ -111,6 +136,11 @@ def _gate_fault(ctx, action):
     if facts is None:
         return Verdict.deny("không tra được đơn hoặc chính sách: không ghi lỗi hãng")
     order, parcel, delay, pol = facts
+    # G4: không ghi lỗi hãng trên dữ liệu giao hàng tự mâu thuẫn.
+    conflict = _delivery_conflict(ctx, order, pol)
+    if conflict:
+        ctx.log("delivery_data_conflict", order_id=order["order_id"], reason=conflict)
+        return Verdict.escalate(f"dữ liệu giao hàng không nhất quán ({conflict}): chuyển người, không ghi lỗi hãng")
     # Kiện bị ghi lỗi phải là kiện của ticket (trợ lý gốc lấy kiện đầu tiên của đơn).
     if not H.carrier_at_fault(pol, parcel, delay):
         ctx.log("carrier_fault_blocked", parcel_id=parcel["parcel_id"], db_delay_days=delay,
@@ -141,6 +171,26 @@ def _gate_notify(ctx, action):
     return Verdict.allow()
 
 
+def _gate_reply(ctx, action):
+    """G5: lời từ chối (amount_vnd = 0) mà tracking cho thấy khách đủ điều kiện hoàn thì không gửi: chuyển người."""
+    if int(action.get("amount_vnd") or 0) != 0:
+        return Verdict.allow()
+    order_id = ctx.ticket.get("order_id")
+    if not order_id:
+        return Verdict.allow()
+    facts = _ticket_facts(ctx, order_id)
+    if facts is None:
+        return Verdict.allow()
+    order, parcel, delay, pol = facts
+    if ctx.tools.ledger_rows(order_id=order["order_id"]):      # đã hoàn rồi: từ chối là đúng
+        return Verdict.allow()
+    entitled = H.entitlement_vnd(pol, order, delay, parcel.get("delay_cause"))
+    if entitled > 0:
+        ctx.log("denial_vs_entitlement", order_id=order["order_id"], entitled=entitled, db_delay_days=delay)
+        return Verdict.escalate(f"trợ lý định từ chối nhưng tracking ({delay} ngày) cho thấy đủ điều kiện hoàn: chuyển người")
+    return Verdict.allow()
+
+
 def write_gate(ctx, action):
     # action = {"tool": "issue_refund", "ticket_id":..., "order_id":..., "amount_vnd":..., "payer":..., ...}
     tool = action.get("tool")
@@ -150,4 +200,6 @@ def write_gate(ctx, action):
         return _gate_fault(ctx, action)
     if tool == "notify_carrier":
         return _gate_notify(ctx, action)
+    if tool == "send_reply":
+        return _gate_reply(ctx, action)
     return Verdict.allow()

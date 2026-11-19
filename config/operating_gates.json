@@ -19,7 +19,7 @@
       "Khi có ca chờ người duyệt quá 45 phút hoặc 1 ca bị ùn (quá SLA 60 phút) thì gọi thêm người duyệt; nếu 2 giờ liên tiếp vẫn ùn thì thu hẹp phạm vi về 1 kho",
       "Khi tổng hoàn tự động trong ngày chạm 1.000.000đ thì mọi khoản hoàn còn lại trong ngày chuyển NV-HANH duyệt"
     ],
-    "alert_channel": "#logix-refund-pilot-alerts (Slack nội bộ, NV-TUNG và NV-HANH nhận thông báo)",
+    "alert_channel": "#logix-refund-pilot-alerts (Slack nội bộ, NV-TUNG, NV-HANH và NV-OANH nhận thông báo)",
     "decision_note": true,
     "review_sampling_pct": 10
   },
